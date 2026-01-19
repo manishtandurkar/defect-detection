@@ -1,0 +1,101 @@
+# Data folders
+data/
+dataset/
+datasets/
+
+# Model files
+*.pth
+*.pt
+*.h5
+*.onnx
+*.pkl
+*.pickle
+defect_detection_model.pth
+defect_detection_model_scripted.pt
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+.env
+
+# Jupyter Notebook
+.ipynb_checkpoints
+#*.ipynb
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Node modules
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Build outputs
+frontend/dist/
+frontend/build/
+backend/dist/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/
+
+# Environment variables
+.env
+.env.local
+
+# Generated images
+*.png
+*.jpg
+*.jpeg
+!training_history.png
+!confusion_matrix.png
+!sample_predictions.png
+
+# Markdown files (except README)
+*.md
+!README.md
+
+# Temp files
+tmp/
+temp/
+*.tmp
+
+model/

@@ -65,12 +65,18 @@ class FeatureExtractor(nn.Module):
 
 class PaDiM:
     """Hybrid KNN + Intensity Anomaly Detection for NEU Dataset"""
+    
+    # Configuration constants
+    FEATURE_SELECTION_COUNT = 500  # Top 500 features with highest variance
+    K_NEIGHBORS = 50  # Number of nearest neighbors for KNN distance
+    KNN_SCORE_NORMALIZER = 10.0  # Normalize KNN distance to [0, 1] range
+    
     def __init__(self, feature_extractor, device='cpu'):
         self.feature_extractor = feature_extractor
         self.device = device
         self.memory_banks = {}  # Per-class memory banks
         self.selected_indices = None
-        self.k_neighbors = 50
+        self.k_neighbors = self.K_NEIGHBORS
         
     def extract_features(self, image_tensor):
         """Extract multi-scale features"""
@@ -101,11 +107,12 @@ class PaDiM:
         
         memory_bank = torch.stack(features_list).to(self.device)
         
-        # Feature selection: top 500 features with highest std (like mohan696matlab)
+        # Feature selection: top features with highest std (inspired by mohan696matlab)
+        # Reduces dimensionality and focuses on most discriminative features
         if self.selected_indices is None:
             stds = memory_bank.std(dim=0)
             _, indices = torch.sort(stds, descending=True)
-            self.selected_indices = indices[:500]
+            self.selected_indices = indices[:self.FEATURE_SELECTION_COUNT]
         
         self.memory_banks[class_name] = memory_bank[:, self.selected_indices]
         print(f"Built memory bank for {class_name}: {memory_bank.shape}")
@@ -120,7 +127,10 @@ class PaDiM:
             average distance to k-nearest neighbors
         """
         if class_name not in self.memory_banks:
-            # Fallback: use combined memory bank
+            # Fallback: use combined memory bank if class-specific bank not found
+            # This handles cases where memory banks weren't built or class is unknown
+            if not self.memory_banks:
+                return 0  # No memory banks available
             all_banks = torch.cat(list(self.memory_banks.values()), dim=0)
             relevant_bank = all_banks
         else:
@@ -192,8 +202,9 @@ class PaDiM:
         feature_map = np.mean(anomaly_maps, axis=0) if anomaly_maps else np.zeros(target_size)
         
         # 4. Fusion: 50% features + 40% intensity + 10% KNN score
-        # Balanced weights for NEU metallic dataset
-        knn_map = np.full(target_size, knn_score / 10.0)  # Normalize KNN score
+        # Balanced weights for NEU metallic dataset based on empirical testing
+        # KNN score is normalized by dividing by KNN_SCORE_NORMALIZER to scale to [0, 1]
+        knn_map = np.full(target_size, knn_score / self.KNN_SCORE_NORMALIZER)
         final_map = 0.5 * feature_map + 0.4 * intensity_map_resized + 0.1 * knn_map
         
         # 5. Simple smoothing (no aggressive transforms!)
@@ -266,7 +277,13 @@ def preprocess_image(image: Image.Image):
 
 
 def create_heatmap_overlay(original_image: np.ndarray, anomaly_map: np.ndarray, alpha=0.5):
-    """Create heatmap overlay with simplified colormap"""
+    """Create heatmap overlay with simplified colormap
+    
+    Uses JET colormap for better defect visualization compared to TURBO:
+    - JET provides clearer transition from blue (normal) to red (defect)
+    - Better suited for metallic surface defects where contrast is important
+    - More familiar color scheme for quality inspection applications
+    """
     
     # Clip to valid range
     anomaly_map_clipped = np.clip(anomaly_map, 0, 100)

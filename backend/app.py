@@ -234,7 +234,8 @@ class PaDiM:
         final_map = gaussian_filter(final_map, sigma=2, mode='reflect')
         
         # 6. Suppress edge artifacts (corners and borders)
-        # Create an edge mask that gradually reduces anomaly scores near boundaries
+        # Instead of masking all edge pixels, only suppress unusually high anomaly scores
+        # near boundaries that are likely artifacts rather than real defects
         h, w = final_map.shape
         
         # Create distance transforms from edges
@@ -246,12 +247,19 @@ class PaDiM:
         # Compute minimum distance to any edge
         edge_dist = np.minimum(y_dist_2d, x_dist_2d)
         
-        # Create smooth edge mask (0 at edges, 1 at center)
-        # Use linear function for smooth transition
-        edge_mask = np.clip(edge_dist / self.EDGE_MARGIN, 0, 1)
+        # Create a soft suppression mask that only affects pixels very close to edges
+        # Use exponential decay for smoother transition
+        # Mask is 1.0 for pixels > EDGE_MARGIN away from edge, and decreases near edges
+        edge_weight = np.minimum(1.0, edge_dist / (self.EDGE_MARGIN / 2.0))
         
-        # Apply edge suppression
-        final_map = final_map * edge_mask
+        # Only suppress high anomaly values near edges (potential artifacts)
+        # Keep low/medium values unchanged to avoid visible borders
+        anomaly_threshold = np.percentile(final_map, 75)  # Top 25% are considered high
+        is_high_anomaly = final_map > anomaly_threshold
+        
+        # Apply suppression only to high anomaly scores near edges
+        suppression_mask = np.where(is_high_anomaly, edge_weight, 1.0)
+        final_map = final_map * suppression_mask
         
         # 7. Simple normalization (removed complex percentile + power transforms)
         if final_map.max() > final_map.min():

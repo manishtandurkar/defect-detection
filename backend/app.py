@@ -408,8 +408,9 @@ async def model_info():
         "num_classes": len(CLASS_NAMES),
         "input_size": f"{IMG_SIZE}x{IMG_SIZE}",
         "device": str(device),
-        "xai_method": "Feature Activation-based Anomaly Detection",
-        "colormap": "TURBO (Red=Defect, Blue=Normal)"
+        "xai_method": "Hybrid KNN + Intensity Anomaly Detection",
+        "colormap": "JET (Red=Defect, Blue=Normal)",
+        "memory_banks": len(padim_features.memory_banks) if padim_features else 0
     }
 
 

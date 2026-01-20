@@ -16,7 +16,7 @@ import base64
 from typing import Dict, List
 import cv2
 from sklearn.metrics import pairwise_distances
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import gaussian_filter, generic_filter
 import pickle
 import os
 
@@ -70,6 +70,11 @@ class PaDiM:
     FEATURE_SELECTION_COUNT = 500  # Top 500 features with highest variance
     K_NEIGHBORS = 50  # Number of nearest neighbors for KNN distance
     KNN_SCORE_NORMALIZER = 10.0  # Normalize KNN distance to [0, 1] range
+    
+    # Intensity filtering parameters
+    VARIANCE_FILTER_SIZE = 5  # Local variance window size
+    INTENSITY_PERCENTILE_THRESHOLD = 60  # Only consider top 40% darker regions
+    EPSILON = 1e-8  # Small value to avoid division by zero
     
     def __init__(self, feature_extractor, device='cpu'):
         self.feature_extractor = feature_extractor
@@ -175,19 +180,18 @@ class PaDiM:
         
         # Compute local variance to identify regions with actual defects vs. uniform dark areas
         # This helps reduce false positives from normal dark regions
-        from scipy.ndimage import generic_filter
-        local_std = generic_filter(grayscale, np.std, size=5)
+        local_std = generic_filter(grayscale, np.std, size=self.VARIANCE_FILTER_SIZE)
         
         # Invert for dark defects on metallic surfaces
         intensity_map = -grayscale
         
         # Apply threshold to filter out uniformly dark regions (likely not defects)
         # Only consider darker regions that also have some texture variation
-        intensity_threshold = np.percentile(-grayscale, 60)  # Only top 40% darker regions
+        intensity_threshold = np.percentile(-grayscale, self.INTENSITY_PERCENTILE_THRESHOLD)
         intensity_map = np.where(-grayscale > intensity_threshold, intensity_map, 0)
         
         # Weight by local variance to suppress uniform dark regions
-        intensity_map = intensity_map * (local_std / (local_std.max() + 1e-8))
+        intensity_map = intensity_map * (local_std / (local_std.max() + self.EPSILON))
         
         # Simple normalization
         if intensity_map.max() > intensity_map.min():

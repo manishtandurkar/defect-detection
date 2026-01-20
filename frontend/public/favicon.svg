@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3b82f6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#8b5cf6;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <!-- Background circle -->
+  <circle cx="50" cy="50" r="45" fill="url(#grad)"/>
+  <!-- Magnifying glass -->
+  <circle cx="42" cy="42" r="20" fill="none" stroke="white" stroke-width="5"/>
+  <line x1="57" y1="57" x2="75" y2="75" stroke="white" stroke-width="5" stroke-linecap="round"/>
+  <!-- Defect indicator (X mark) -->
+  <line x1="35" y1="35" x2="49" y2="49" stroke="#ef4444" stroke-width="4" stroke-linecap="round"/>
+  <line x1="49" y1="35" x2="35" y2="49" stroke="#ef4444" stroke-width="4" stroke-linecap="round"/>
+</svg>

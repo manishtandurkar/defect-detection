@@ -1,6 +1,6 @@
 """
 FastAPI Backend for Metallic Surface Defect Detection
-with PaDiM-based Anomaly Localization
+with PaDiM-based Anomaly Localization - Improved Heatmap
 """
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
@@ -77,9 +77,26 @@ class PaDiM:
         return features
     
     def compute_anomaly_map(self, image_tensor, target_size=(224, 224)):
-        """Compute anomaly heatmap based on feature activation patterns"""
+        """Compute anomaly heatmap based on feature activation patterns and image intensity"""
         features = self.extract_features(image_tensor)
         anomaly_maps = []
+        
+        # Extract intensity-based anomaly from the original image tensor
+        # Defects typically appear as darker regions in metallic surfaces
+        img_np = image_tensor[0].cpu().numpy()  # Shape: (C, H, W)
+        # Convert to grayscale by averaging channels
+        grayscale = np.mean(img_np, axis=0)  # Shape: (H, W)
+        
+        # Invert so that dark areas (defects) have high values
+        # The tensor is normalized, so we need to handle negative values
+        intensity_map = -grayscale  # Invert: dark regions become high values
+        
+        # Normalize intensity map to [0, 1]
+        if intensity_map.max() > intensity_map.min():
+            intensity_map = (intensity_map - intensity_map.min()) / (intensity_map.max() - intensity_map.min())
+        
+        # Resize intensity map to target size
+        intensity_map_resized = cv2.resize(intensity_map, target_size)
         
         for i, feat in enumerate(features):
             # Get feature activations
@@ -87,7 +104,6 @@ class PaDiM:
             b, c, h, w = feat_np.shape
             
             # Compute activation magnitudes across channels
-            # Higher activations indicate areas the network is focusing on
             activation_map = np.mean(np.abs(feat_np[0]), axis=0)
             
             # Normalize to [0, 1]
@@ -109,21 +125,41 @@ class PaDiM:
         # Weighted average (later layers have more semantic information)
         if len(anomaly_maps) >= 3:
             weights = [0.2, 0.3, 0.5]  # Give more weight to deeper layers
-            final_map = sum(w * m for w, m in zip(weights, anomaly_maps))
+            feature_map = sum(w * m for w, m in zip(weights, anomaly_maps))
         elif anomaly_maps:
-            final_map = np.mean(anomaly_maps, axis=0)
+            feature_map = np.mean(anomaly_maps, axis=0)
         else:
-            final_map = np.zeros(target_size)
+            feature_map = np.zeros(target_size)
+        
+        # Combine feature-based map with intensity-based map
+        # Give higher weight to intensity since defects are visually darker
+        final_map = feature_map * 0.3 + intensity_map_resized * 0.7
         
         # Apply Gaussian smoothing for better visualization
-        final_map = gaussian_filter(final_map, sigma=4)
+        final_map = gaussian_filter(final_map, sigma=3)
         
-        # Enhance contrast
-        final_map = np.power(final_map, 0.8)  # Gamma correction
+        # Enhance contrast using percentile-based normalization
+        p98 = np.percentile(final_map, 98)
+        p2 = np.percentile(final_map, 2)
         
-        # Normalize to [0, 100] for better score interpretation
-        if final_map.max() > final_map.min():
-            final_map = ((final_map - final_map.min()) / (final_map.max() - final_map.min())) * 100
+        if p98 > p2:
+            final_map = np.clip((final_map - p2) / (p98 - p2), 0, 1)
+        else:
+            if final_map.max() > final_map.min():
+                final_map = (final_map - final_map.min()) / (final_map.max() - final_map.min())
+        
+        # Apply non-linear transformation to emphasize high anomaly regions
+        # This makes high values (defects) stand out more with darker red
+        final_map = np.power(final_map, 0.7)  # Gamma < 1 to boost mid-to-high values
+        
+        # Apply another pass to really push high intensity defects to max
+        # Threshold and boost high anomaly regions
+        high_anomaly_mask = final_map > 0.6
+        final_map[high_anomaly_mask] = 0.6 + (final_map[high_anomaly_mask] - 0.6) * 2.0
+        final_map = np.clip(final_map, 0, 1)
+        
+        # Scale to [0, 100] for score interpretation
+        final_map = final_map * 100
         
         return final_map
 
@@ -175,21 +211,36 @@ def preprocess_image(image: Image.Image):
 
 
 def create_heatmap_overlay(original_image: np.ndarray, anomaly_map: np.ndarray, alpha=0.5):
-    """Create heatmap overlay on original image"""
-    # Normalize anomaly map to [0, 255]
-    anomaly_map_norm = ((anomaly_map - anomaly_map.min()) / 
-                        (anomaly_map.max() - anomaly_map.min() + 1e-8) * 255).astype(np.uint8)
+    """Create heatmap overlay on original image with improved color mapping"""
     
-    # Apply colormap
-    heatmap = cv2.applyColorMap(anomaly_map_norm, cv2.COLORMAP_JET)
+    # Ensure anomaly map is in proper range [0, 100]
+    anomaly_map_clipped = np.clip(anomaly_map, 0, 100)
+    
+    # Convert to 0-255 range for colormap
+    anomaly_map_norm = (anomaly_map_clipped / 100.0 * 255).astype(np.uint8)
+    
+    # Apply TURBO colormap (better for defect visualization)
+    # Red = high anomaly, Blue = low anomaly
+    heatmap = cv2.applyColorMap(anomaly_map_norm, cv2.COLORMAP_TURBO)
     heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
+    
+    # Alternative: Use JET with inverted colors for clearer red defects
+    # Uncomment below and comment above TURBO lines to use JET
+    # heatmap = cv2.applyColorMap(255 - anomaly_map_norm, cv2.COLORMAP_JET)
+    # heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
     
     # Resize to match original image
     if original_image.shape[:2] != heatmap.shape[:2]:
         heatmap = cv2.resize(heatmap, (original_image.shape[1], original_image.shape[0]))
     
-    # Overlay
-    overlay = cv2.addWeighted(original_image, 1-alpha, heatmap, alpha, 0)
+    # Create overlay with adaptive alpha based on anomaly intensity
+    # Higher anomaly = more visible overlay
+    alpha_map = (anomaly_map_clipped / 100.0) ** 0.5  # Non-linear scaling
+    alpha_map = np.clip(alpha_map * alpha * 1.5, 0, 0.8)  # Max 80% opacity
+    alpha_map = np.stack([alpha_map] * 3, axis=-1)  # RGB channels
+    
+    # Blend images
+    overlay = (original_image * (1 - alpha_map) + heatmap * alpha_map).astype(np.uint8)
     
     return overlay, heatmap
 
@@ -248,12 +299,13 @@ async def predict(file: UploadFile = File(...)):
             target_size=(image_np.shape[0], image_np.shape[1])
         )
         
-        # Create heatmap overlay
-        overlay_image, heatmap_only = create_heatmap_overlay(image_np, anomaly_map, alpha=0.4)
+        # Create heatmap overlay with improved color mapping
+        overlay_image, heatmap_only = create_heatmap_overlay(image_np, anomaly_map, alpha=0.5)
         
-        # Calculate anomaly score
+        # Calculate anomaly score with better statistics
         anomaly_score = float(np.max(anomaly_map))
         anomaly_mean = float(np.mean(anomaly_map))
+        anomaly_p95 = float(np.percentile(anomaly_map, 95))
         
         # Convert images to base64
         original_b64 = numpy_to_base64(image_np)
@@ -270,7 +322,8 @@ async def predict(file: UploadFile = File(...)):
             "anomaly": {
                 "score": anomaly_score,
                 "mean_score": anomaly_mean,
-                "interpretation": "Higher scores indicate more anomalous regions"
+                "p95_score": anomaly_p95,
+                "interpretation": "Red areas = High defect probability, Blue areas = Normal regions"
             },
             "images": {
                 "original": original_b64,
@@ -292,7 +345,8 @@ async def model_info():
         "num_classes": len(CLASS_NAMES),
         "input_size": f"{IMG_SIZE}x{IMG_SIZE}",
         "device": str(device),
-        "xai_method": "Feature Activation-based Anomaly Detection"
+        "xai_method": "Feature Activation-based Anomaly Detection",
+        "colormap": "TURBO (Red=Defect, Blue=Normal)"
     }
 
 

@@ -76,6 +76,9 @@ class PaDiM:
     INTENSITY_PERCENTILE_THRESHOLD = 60  # Only consider top 40% darker regions
     EPSILON = 1e-8  # Small value to avoid division by zero
     
+    # Edge suppression parameters
+    EDGE_MARGIN = 10  # Pixels from edge to suppress artifacts
+    
     def __init__(self, feature_extractor, device='cpu'):
         self.feature_extractor = feature_extractor
         self.device = device
@@ -233,7 +236,6 @@ class PaDiM:
         # 6. Suppress edge artifacts (corners and borders)
         # Create an edge mask that gradually reduces anomaly scores near boundaries
         h, w = final_map.shape
-        edge_margin = 10  # pixels from edge to start suppression
         
         # Create distance transforms from edges
         y_dist = np.minimum(np.arange(h), np.arange(h)[::-1])
@@ -245,8 +247,8 @@ class PaDiM:
         edge_dist = np.minimum(y_dist_2d, x_dist_2d)
         
         # Create smooth edge mask (0 at edges, 1 at center)
-        # Use sigmoid-like function for smooth transition
-        edge_mask = np.clip(edge_dist / edge_margin, 0, 1)
+        # Use linear function for smooth transition
+        edge_mask = np.clip(edge_dist / self.EDGE_MARGIN, 0, 1)
         
         # Apply edge suppression
         final_map = final_map * edge_mask

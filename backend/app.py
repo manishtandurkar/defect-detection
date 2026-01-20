@@ -64,10 +64,13 @@ class FeatureExtractor(nn.Module):
 
 
 class PaDiM:
-    """PaDiM-inspired: Activation-based Anomaly Localization"""
+    """Hybrid KNN + Intensity Anomaly Detection for NEU Dataset"""
     def __init__(self, feature_extractor, device='cpu'):
         self.feature_extractor = feature_extractor
         self.device = device
+        self.memory_banks = {}  # Per-class memory banks
+        self.selected_indices = None
+        self.k_neighbors = 50
         
     def extract_features(self, image_tensor):
         """Extract multi-scale features"""
@@ -76,96 +79,136 @@ class PaDiM:
             features = self.feature_extractor(image_tensor)
         return features
     
-    def compute_anomaly_map(self, image_tensor, target_size=(224, 224)):
-        """Compute anomaly heatmap based on feature activation patterns and image intensity"""
+    def build_memory_bank(self, class_name, image_tensors):
+        """
+        Build class-specific memory bank from training images
+        Args:
+            class_name: defect class name
+            image_tensors: list of image tensors for this class
+        """
+        features_list = []
+        
+        for img_tensor in image_tensors:
+            with torch.no_grad():
+                features = self.extract_features(img_tensor)
+                # Flatten multi-layer features
+                combined_features = []
+                for feat in features:
+                    feat_flat = feat.flatten(start_dim=1)
+                    combined_features.append(feat_flat)
+                all_features = torch.cat(combined_features, dim=1)
+                features_list.append(all_features.squeeze())
+        
+        memory_bank = torch.stack(features_list).to(self.device)
+        
+        # Feature selection: top 500 features with highest std (like mohan696matlab)
+        if self.selected_indices is None:
+            stds = memory_bank.std(dim=0)
+            _, indices = torch.sort(stds, descending=True)
+            self.selected_indices = indices[:500]
+        
+        self.memory_banks[class_name] = memory_bank[:, self.selected_indices]
+        print(f"Built memory bank for {class_name}: {memory_bank.shape}")
+    
+    def compute_knn_distance(self, features, class_name):
+        """
+        Compute KNN-based anomaly score
+        Args:
+            features: extracted features from test image
+            class_name: predicted defect class
+        Returns:
+            average distance to k-nearest neighbors
+        """
+        if class_name not in self.memory_banks:
+            # Fallback: use combined memory bank
+            all_banks = torch.cat(list(self.memory_banks.values()), dim=0)
+            relevant_bank = all_banks
+        else:
+            relevant_bank = self.memory_banks[class_name]
+        
+        # Flatten and select features
+        combined_features = []
+        for feat in features:
+            feat_flat = feat.flatten(start_dim=1)
+            combined_features.append(feat_flat)
+        all_features = torch.cat(combined_features, dim=1)
+        feat_selected = all_features[0, self.selected_indices]
+        
+        # Calculate distances to all samples in memory bank
+        distances = torch.norm(relevant_bank - feat_selected, dim=1)
+        
+        # Get k-nearest neighbors
+        sorted_distances = torch.sort(distances)[0]
+        knn_distances = sorted_distances[:self.k_neighbors]
+        
+        return knn_distances.mean().cpu().item()
+    
+    def compute_anomaly_map(self, image_tensor, predicted_class=None, target_size=(224, 224)):
+        """
+        Hybrid anomaly map: KNN + Intensity for metallic surfaces
+        Args:
+            image_tensor: input image tensor
+            predicted_class: predicted defect class (optional)
+            target_size: output heatmap size
+        """
+        # Extract features
         features = self.extract_features(image_tensor)
-        anomaly_maps = []
         
-        # Extract intensity-based anomaly from the original image tensor
-        # Defects typically appear as darker regions in metallic surfaces
-        img_np = image_tensor[0].cpu().numpy()  # Shape: (C, H, W)
-        # Convert to grayscale by averaging channels
-        grayscale = np.mean(img_np, axis=0)  # Shape: (H, W)
+        # 1. KNN-based anomaly score (simplified approach)
+        knn_score = 0
+        if self.memory_banks and predicted_class:
+            knn_score = self.compute_knn_distance(features, predicted_class)
         
-        # Invert so that dark areas (defects) have high values
-        # The tensor is normalized, so we need to handle negative values
-        intensity_map = -grayscale  # Invert: dark regions become high values
+        # 2. Intensity-based anomaly for metallic surfaces
+        img_np = image_tensor[0].cpu().numpy()
+        grayscale = np.mean(img_np, axis=0)
         
-        # Normalize intensity map to [0, 1]
+        # Invert for dark defects on metallic surfaces
+        intensity_map = -grayscale
+        
+        # Simple normalization
         if intensity_map.max() > intensity_map.min():
-            intensity_map = (intensity_map - intensity_map.min()) / (intensity_map.max() - intensity_map.min())
+            intensity_map = (intensity_map - intensity_map.min()) / \
+                           (intensity_map.max() - intensity_map.min())
         
-        # Resize intensity map to target size
+        # Resize to target
         intensity_map_resized = cv2.resize(intensity_map, target_size)
         
-        for i, feat in enumerate(features):
-            # Get feature activations
+        # 3. Feature-based spatial map (simplified from original)
+        anomaly_maps = []
+        for feat in features:
             feat_np = feat.cpu().numpy()
-            b, c, h, w = feat_np.shape
-            
-            # Compute activation magnitudes across channels
             activation_map = np.mean(np.abs(feat_np[0]), axis=0)
             
-            # Normalize to [0, 1]
+            # Simple normalization
             if activation_map.max() > activation_map.min():
-                activation_map = (activation_map - activation_map.min()) / (activation_map.max() - activation_map.min())
+                activation_map = (activation_map - activation_map.min()) / \
+                                (activation_map.max() - activation_map.min())
             
-            # Compute variance across channels (higher variance = more diverse features = potential anomaly)
-            variance_map = np.var(feat_np[0], axis=0)
-            if variance_map.max() > variance_map.min():
-                variance_map = (variance_map - variance_map.min()) / (variance_map.max() - variance_map.min())
-            
-            # Combine activation and variance
-            combined_map = activation_map * 0.6 + variance_map * 0.4
-            
-            # Resize to target size
-            combined_resized = cv2.resize(combined_map, target_size)
-            anomaly_maps.append(combined_resized)
+            activation_resized = cv2.resize(activation_map, target_size)
+            anomaly_maps.append(activation_resized)
         
-        # Weighted average (later layers have more semantic information)
-        if len(anomaly_maps) >= 3:
-            weights = [0.2, 0.3, 0.5]  # Give more weight to deeper layers
-            feature_map = sum(w * m for w, m in zip(weights, anomaly_maps))
-        elif anomaly_maps:
-            feature_map = np.mean(anomaly_maps, axis=0)
-        else:
-            feature_map = np.zeros(target_size)
+        # Average feature maps
+        feature_map = np.mean(anomaly_maps, axis=0) if anomaly_maps else np.zeros(target_size)
         
-        # Combine feature-based map with intensity-based map
-        # Give higher weight to intensity since defects are visually darker
-        final_map = feature_map * 0.3 + intensity_map_resized * 0.7
+        # 4. Fusion: 50% features + 40% intensity + 10% KNN score
+        # Balanced weights for NEU metallic dataset
+        knn_map = np.full(target_size, knn_score / 10.0)  # Normalize KNN score
+        final_map = 0.5 * feature_map + 0.4 * intensity_map_resized + 0.1 * knn_map
         
-        # Apply Gaussian smoothing for better visualization
-        final_map = gaussian_filter(final_map, sigma=3)
+        # 5. Simple smoothing (no aggressive transforms!)
+        final_map = gaussian_filter(final_map, sigma=2)
         
-        # Enhance contrast using percentile-based normalization
-        p98 = np.percentile(final_map, 98)
-        p2 = np.percentile(final_map, 2)
+        # 6. Simple normalization (removed complex percentile + power transforms)
+        if final_map.max() > final_map.min():
+            final_map = (final_map - final_map.min()) / (final_map.max() - final_map.min())
         
-        if p98 > p2:
-            final_map = np.clip((final_map - p2) / (p98 - p2), 0, 1)
-        else:
-            if final_map.max() > final_map.min():
-                final_map = (final_map - final_map.min()) / (final_map.max() - final_map.min())
-        
-        # Apply non-linear transformation to emphasize high anomaly regions
-        # This makes high values (defects) stand out more with darker red
-        final_map = np.power(final_map, 0.7)  # Gamma < 1 to boost mid-to-high values
-        
-        # Apply another pass to really push high intensity defects to max
-        # Threshold and boost high anomaly regions
-        high_anomaly_mask = final_map > 0.6
-        final_map[high_anomaly_mask] = 0.6 + (final_map[high_anomaly_mask] - 0.6) * 2.0
-        final_map = np.clip(final_map, 0, 1)
-        
-        # Scale to [0, 100] for score interpretation
-        final_map = final_map * 100
-        
-        return final_map
+        # Scale to [0, 100]
+        return final_map * 100
 
 
 def load_model():
-    """Load the trained defect detection model"""
+    """Load the trained defect detection model and memory banks"""
     global model, feature_extractor, padim_features
     
     try:
@@ -183,8 +226,20 @@ def load_model():
         feature_extractor = FeatureExtractor(model).to(device)
         feature_extractor.eval()
         
-        # Initialize PaDiM (reference features would be built from training data)
+        # Initialize PaDiM with hybrid approach
         padim_features = PaDiM(feature_extractor, device)
+        
+        # Load pre-built memory banks if available
+        from pathlib import Path
+        memory_bank_path = 'memory_banks.pkl'
+        if Path(memory_bank_path).exists():
+            memory_data = torch.load(memory_bank_path, map_location=device)
+            padim_features.memory_banks = memory_data['memory_banks']
+            padim_features.selected_indices = memory_data['selected_indices']
+            padim_features.k_neighbors = memory_data['k_neighbors']
+            print(f"✓ Loaded memory banks for {len(padim_features.memory_banks)} classes")
+        else:
+            print(f"⚠ Memory banks not found. Run build_memory_banks.py first for best results.")
         
         print(f"✓ Model loaded successfully on {device}")
         
@@ -211,36 +266,24 @@ def preprocess_image(image: Image.Image):
 
 
 def create_heatmap_overlay(original_image: np.ndarray, anomaly_map: np.ndarray, alpha=0.5):
-    """Create heatmap overlay on original image with improved color mapping"""
+    """Create heatmap overlay with simplified colormap"""
     
-    # Ensure anomaly map is in proper range [0, 100]
+    # Clip to valid range
     anomaly_map_clipped = np.clip(anomaly_map, 0, 100)
     
-    # Convert to 0-255 range for colormap
+    # Convert to 0-255 range
     anomaly_map_norm = (anomaly_map_clipped / 100.0 * 255).astype(np.uint8)
     
-    # Apply TURBO colormap (better for defect visualization)
-    # Red = high anomaly, Blue = low anomaly
-    heatmap = cv2.applyColorMap(anomaly_map_norm, cv2.COLORMAP_TURBO)
+    # Use JET colormap for clearer visualization (simpler than TURBO)
+    heatmap = cv2.applyColorMap(anomaly_map_norm, cv2.COLORMAP_JET)
     heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
-    
-    # Alternative: Use JET with inverted colors for clearer red defects
-    # Uncomment below and comment above TURBO lines to use JET
-    # heatmap = cv2.applyColorMap(255 - anomaly_map_norm, cv2.COLORMAP_JET)
-    # heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
     
     # Resize to match original image
     if original_image.shape[:2] != heatmap.shape[:2]:
         heatmap = cv2.resize(heatmap, (original_image.shape[1], original_image.shape[0]))
     
-    # Create overlay with adaptive alpha based on anomaly intensity
-    # Higher anomaly = more visible overlay
-    alpha_map = (anomaly_map_clipped / 100.0) ** 0.5  # Non-linear scaling
-    alpha_map = np.clip(alpha_map * alpha * 1.5, 0, 0.8)  # Max 80% opacity
-    alpha_map = np.stack([alpha_map] * 3, axis=-1)  # RGB channels
-    
-    # Blend images
-    overlay = (original_image * (1 - alpha_map) + heatmap * alpha_map).astype(np.uint8)
+    # Simple fixed alpha blending (removed adaptive alpha)
+    overlay = cv2.addWeighted(original_image, 1 - alpha, heatmap, alpha, 0)
     
     return overlay, heatmap
 
@@ -268,9 +311,7 @@ async def root():
 
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
-    """
-    Predict defect class and generate PaDiM anomaly heatmap
-    """
+    """Predict with improved heatmap generation"""
     try:
         # Read and validate image
         contents = await file.read()
@@ -293,16 +334,21 @@ async def predict(file: UploadFile = File(...)):
         all_probs = probabilities[0].cpu().numpy().tolist()
         class_probs = {CLASS_NAMES[i]: float(all_probs[i]) for i in range(len(CLASS_NAMES))}
         
-        # Generate PaDiM anomaly map
+        # Generate anomaly map with predicted class (KEY CHANGE)
         anomaly_map = padim_features.compute_anomaly_map(
-            image_tensor, 
+            image_tensor,
+            predicted_class=predicted_class,  # Pass predicted class
             target_size=(image_np.shape[0], image_np.shape[1])
         )
         
-        # Create heatmap overlay with improved color mapping
-        overlay_image, heatmap_only = create_heatmap_overlay(image_np, anomaly_map, alpha=0.5)
+        # Create heatmap overlay with simplified method
+        overlay_image, heatmap_only = create_heatmap_overlay(
+            image_np, 
+            anomaly_map, 
+            alpha=0.4  # Reduced alpha for better visibility
+        )
         
-        # Calculate anomaly score with better statistics
+        # Calculate anomaly statistics
         anomaly_score = float(np.max(anomaly_map))
         anomaly_mean = float(np.mean(anomaly_map))
         anomaly_p95 = float(np.percentile(anomaly_map, 95))

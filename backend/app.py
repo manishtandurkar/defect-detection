@@ -173,8 +173,21 @@ class PaDiM:
         img_np = image_tensor[0].cpu().numpy()
         grayscale = np.mean(img_np, axis=0)
         
+        # Compute local variance to identify regions with actual defects vs. uniform dark areas
+        # This helps reduce false positives from normal dark regions
+        from scipy.ndimage import generic_filter
+        local_std = generic_filter(grayscale, np.std, size=5)
+        
         # Invert for dark defects on metallic surfaces
         intensity_map = -grayscale
+        
+        # Apply threshold to filter out uniformly dark regions (likely not defects)
+        # Only consider darker regions that also have some texture variation
+        intensity_threshold = np.percentile(-grayscale, 60)  # Only top 40% darker regions
+        intensity_map = np.where(-grayscale > intensity_threshold, intensity_map, 0)
+        
+        # Weight by local variance to suppress uniform dark regions
+        intensity_map = intensity_map * (local_std / (local_std.max() + 1e-8))
         
         # Simple normalization
         if intensity_map.max() > intensity_map.min():
@@ -201,11 +214,12 @@ class PaDiM:
         # Average feature maps
         feature_map = np.mean(anomaly_maps, axis=0) if anomaly_maps else np.zeros(target_size)
         
-        # 4. Fusion: 50% features + 40% intensity + 10% KNN score
-        # Balanced weights for NEU metallic dataset based on empirical testing
+        # 4. Fusion: 60% features + 25% intensity + 15% KNN score
+        # Reduced intensity weight to minimize false positives from normal dark regions
+        # Increased feature and KNN weights for more reliable anomaly detection
         # KNN score is normalized by dividing by KNN_SCORE_NORMALIZER to scale to [0, 1]
         knn_map = np.full(target_size, knn_score / self.KNN_SCORE_NORMALIZER)
-        final_map = 0.5 * feature_map + 0.4 * intensity_map_resized + 0.1 * knn_map
+        final_map = 0.60 * feature_map + 0.25 * intensity_map_resized + 0.15 * knn_map
         
         # 5. Simple smoothing (no aggressive transforms!)
         final_map = gaussian_filter(final_map, sigma=2)

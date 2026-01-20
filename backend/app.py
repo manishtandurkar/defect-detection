@@ -76,9 +76,6 @@ class PaDiM:
     INTENSITY_PERCENTILE_THRESHOLD = 60  # Only consider top 40% darker regions
     EPSILON = 1e-8  # Small value to avoid division by zero
     
-    # Edge suppression parameters
-    EDGE_MARGIN = 10  # Pixels from edge to suppress artifacts
-    
     def __init__(self, feature_extractor, device='cpu'):
         self.feature_extractor = feature_extractor
         self.device = device
@@ -183,8 +180,7 @@ class PaDiM:
         
         # Compute local variance to identify regions with actual defects vs. uniform dark areas
         # This helps reduce false positives from normal dark regions
-        # Use 'reflect' mode to minimize boundary artifacts
-        local_std = generic_filter(grayscale, np.std, size=self.VARIANCE_FILTER_SIZE, mode='reflect')
+        local_std = generic_filter(grayscale, np.std, size=self.VARIANCE_FILTER_SIZE)
         
         # Invert for dark defects on metallic surfaces
         intensity_map = -grayscale
@@ -230,38 +226,9 @@ class PaDiM:
         final_map = 0.60 * feature_map + 0.25 * intensity_map_resized + 0.15 * knn_map
         
         # 5. Simple smoothing (no aggressive transforms!)
-        # Use 'reflect' mode to minimize boundary artifacts
-        final_map = gaussian_filter(final_map, sigma=2, mode='reflect')
+        final_map = gaussian_filter(final_map, sigma=2)
         
-        # 6. Suppress edge artifacts (corners and borders)
-        # Instead of masking all edge pixels, only suppress unusually high anomaly scores
-        # near boundaries that are likely artifacts rather than real defects
-        h, w = final_map.shape
-        
-        # Create distance transforms from edges
-        y_dist = np.minimum(np.arange(h), np.arange(h)[::-1])
-        x_dist = np.minimum(np.arange(w), np.arange(w)[::-1])
-        y_dist_2d = np.tile(y_dist.reshape(-1, 1), (1, w))
-        x_dist_2d = np.tile(x_dist.reshape(1, -1), (h, 1))
-        
-        # Compute minimum distance to any edge
-        edge_dist = np.minimum(y_dist_2d, x_dist_2d)
-        
-        # Create a soft suppression mask that only affects pixels very close to edges
-        # Use exponential decay for smoother transition
-        # Mask is 1.0 for pixels > EDGE_MARGIN away from edge, and decreases near edges
-        edge_weight = np.minimum(1.0, edge_dist / (self.EDGE_MARGIN / 2.0))
-        
-        # Only suppress high anomaly values near edges (potential artifacts)
-        # Keep low/medium values unchanged to avoid visible borders
-        anomaly_threshold = np.percentile(final_map, 75)  # Top 25% are considered high
-        is_high_anomaly = final_map > anomaly_threshold
-        
-        # Apply suppression only to high anomaly scores near edges
-        suppression_mask = np.where(is_high_anomaly, edge_weight, 1.0)
-        final_map = final_map * suppression_mask
-        
-        # 7. Simple normalization (removed complex percentile + power transforms)
+        # 6. Simple normalization (removed complex percentile + power transforms)
         if final_map.max() > final_map.min():
             final_map = (final_map - final_map.min()) / (final_map.max() - final_map.min())
         

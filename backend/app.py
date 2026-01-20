@@ -180,7 +180,8 @@ class PaDiM:
         
         # Compute local variance to identify regions with actual defects vs. uniform dark areas
         # This helps reduce false positives from normal dark regions
-        local_std = generic_filter(grayscale, np.std, size=self.VARIANCE_FILTER_SIZE)
+        # Use 'reflect' mode to minimize boundary artifacts
+        local_std = generic_filter(grayscale, np.std, size=self.VARIANCE_FILTER_SIZE, mode='reflect')
         
         # Invert for dark defects on metallic surfaces
         intensity_map = -grayscale
@@ -226,9 +227,31 @@ class PaDiM:
         final_map = 0.60 * feature_map + 0.25 * intensity_map_resized + 0.15 * knn_map
         
         # 5. Simple smoothing (no aggressive transforms!)
-        final_map = gaussian_filter(final_map, sigma=2)
+        # Use 'reflect' mode to minimize boundary artifacts
+        final_map = gaussian_filter(final_map, sigma=2, mode='reflect')
         
-        # 6. Simple normalization (removed complex percentile + power transforms)
+        # 6. Suppress edge artifacts (corners and borders)
+        # Create an edge mask that gradually reduces anomaly scores near boundaries
+        h, w = final_map.shape
+        edge_margin = 10  # pixels from edge to start suppression
+        
+        # Create distance transforms from edges
+        y_dist = np.minimum(np.arange(h), np.arange(h)[::-1])
+        x_dist = np.minimum(np.arange(w), np.arange(w)[::-1])
+        y_dist_2d = np.tile(y_dist.reshape(-1, 1), (1, w))
+        x_dist_2d = np.tile(x_dist.reshape(1, -1), (h, 1))
+        
+        # Compute minimum distance to any edge
+        edge_dist = np.minimum(y_dist_2d, x_dist_2d)
+        
+        # Create smooth edge mask (0 at edges, 1 at center)
+        # Use sigmoid-like function for smooth transition
+        edge_mask = np.clip(edge_dist / edge_margin, 0, 1)
+        
+        # Apply edge suppression
+        final_map = final_map * edge_mask
+        
+        # 7. Simple normalization (removed complex percentile + power transforms)
         if final_map.max() > final_map.min():
             final_map = (final_map - final_map.min()) / (final_map.max() - final_map.min())
         

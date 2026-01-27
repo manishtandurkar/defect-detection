@@ -1,11 +1,52 @@
 import React from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
-import { CheckCircle, AlertTriangle } from 'lucide-react';
+import { CheckCircle, AlertTriangle, AlertCircle } from 'lucide-react';
 import './ResultsSection.css';
 
 function ResultsSection({ predictions, originalImage }) {
   const { prediction } = predictions;
-  
+
+  const defectReasons = {
+    Crazing: {
+      reason: 'Fine cracks on the surface forming a network pattern, typically caused by thermal stress during rapid cooling or heating cycles.',
+      causes: ['Thermal stress from rapid temperature changes', 'Uneven cooling rates', 'Material fatigue', 'Improper heat treatment'],
+      impact: 'Can lead to structural weakness and propagate into larger cracks over time.'
+    },
+    Inclusion: {
+      reason: 'Non-metallic particles or impurities embedded in the metal matrix during manufacturing.',
+      causes: ['Foreign particles in raw materials', 'Contamination during melting', 'Incomplete slag removal', 'Oxidation during processing'],
+      impact: 'Creates stress concentration points that can initiate cracks and reduce material strength.'
+    },
+    Patches: {
+      reason: 'Irregular surface areas with different texture or color, indicating surface contamination or processing irregularities.',
+      causes: ['Scale formation during rolling', 'Surface oxidation', 'Uneven material composition', 'Contamination from rolling equipment'],
+      impact: 'Affects surface finish quality and may indicate underlying material inconsistencies.'
+    },
+    Pitted: {
+      reason: 'Small cavities or depressions on the surface caused by localized material loss.',
+      causes: ['Corrosion from moisture or chemicals', 'Mechanical impact damage', 'Material porosity', 'Electrochemical reactions'],
+      impact: 'Reduces load-bearing capacity and can serve as initiation sites for fatigue cracks.'
+    },
+    Rolled: {
+      reason: 'Linear marks or indentations parallel to the rolling direction, caused by irregularities in the rolling mill.',
+      causes: ['Debris on rolling mill rolls', 'Roll surface defects', 'Uneven pressure distribution', 'Material buildup on rolls'],
+      impact: 'Compromises surface quality and dimensional accuracy of the rolled product.'
+    },
+    Scratches: {
+      reason: 'Linear surface damage from mechanical contact or abrasion during handling or processing.',
+      causes: ['Rough handling during transportation', 'Contact with sharp objects', 'Improper storage conditions', 'Equipment misalignment'],
+      impact: 'Creates stress risers that may lead to crack initiation under load.'
+    }
+  };
+
+  const getDefectInfo = (defectClass) => defectReasons[defectClass] || {
+    reason: 'Defect information not available.',
+    causes: [],
+    impact: ''
+  };
+
+  const defectInfo = getDefectInfo(prediction.class);
+
   // Prepare data for chart
   const chartData = Object.entries(prediction.all_probabilities).map(([name, value]) => ({
     name,
@@ -47,6 +88,43 @@ function ResultsSection({ predictions, originalImage }) {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Defect Analysis Panel */}
+      <div className="defect-analysis-panel">
+        <div className="analysis-header">
+          <AlertCircle size={20} />
+          <h3>Defect Analysis: {prediction.class}</h3>
+        </div>
+
+        <div className="analysis-section">
+          <div className="analysis-label">
+            <strong>Description:</strong>
+          </div>
+          <p className="analysis-text">{defectInfo.reason}</p>
+        </div>
+
+        {defectInfo.causes.length > 0 && (
+          <div className="analysis-section">
+            <div className="analysis-label">
+              <strong>Possible Causes:</strong>
+            </div>
+            <ul className="causes-list">
+              {defectInfo.causes.map((cause, index) => (
+                <li key={index}>{cause}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {defectInfo.impact && (
+          <div className="analysis-section impact-section">
+            <div className="analysis-label">
+              <strong>Impact on Quality:</strong>
+            </div>
+            <p className="analysis-text impact-text">{defectInfo.impact}</p>
+          </div>
+        )}
       </div>
 
       <div className="probability-chart">

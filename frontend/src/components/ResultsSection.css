@@ -66,6 +66,92 @@
   font-weight: 500;
 }
 
+/* Defect Analysis Panel */
+.defect-analysis-panel {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.05) 0%, rgba(249, 115, 22, 0.05) 100%);
+  border: 2px solid rgba(239, 68, 68, 0.2);
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+  animation: slideIn 0.5s ease;
+}
+
+.analysis-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: #dc2626;
+  margin-bottom: 1.5rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 2px solid rgba(239, 68, 68, 0.2);
+}
+
+.analysis-header h3 {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 600;
+}
+
+.analysis-section {
+  margin-bottom: 1.25rem;
+}
+
+.analysis-section:last-child {
+  margin-bottom: 0;
+}
+
+.analysis-label {
+  color: #1f2937;
+  margin-bottom: 0.5rem;
+  font-size: 0.95rem;
+}
+
+.analysis-text {
+  color: #4b5563;
+  line-height: 1.6;
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.causes-list {
+  margin: 0.5rem 0 0 1.5rem;
+  padding: 0;
+  color: #4b5563;
+}
+
+.causes-list li {
+  margin-bottom: 0.5rem;
+  line-height: 1.5;
+  font-size: 0.9rem;
+}
+
+.causes-list li:last-child {
+  margin-bottom: 0;
+}
+
+.impact-section {
+  background: rgba(239, 68, 68, 0.08);
+  padding: 1rem;
+  border-radius: 8px;
+  border-left: 4px solid #ef4444;
+}
+
+.impact-text {
+  font-weight: 500;
+  color: #991b1b;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .probability-chart {
   margin-top: 2rem;
 }
@@ -74,4 +160,23 @@
   margin-bottom: 1rem;
   color: #333;
   font-size: 1.1rem;
+}
+
+@media (max-width: 768px) {
+  .result-card {
+    flex-direction: column;
+    text-align: center;
+  }
+
+  .defect-analysis-panel {
+    padding: 1rem;
+  }
+
+  .analysis-header h3 {
+    font-size: 1rem;
+  }
+
+  .causes-list {
+    margin-left: 1rem;
+  }
 }

@@ -158,13 +158,20 @@ class PaDiM:
         
         return knn_distances.mean().cpu().item()
     
-    def compute_anomaly_map(self, image_tensor, predicted_class=None, target_size=(224, 224)):
+    def compute_anomaly_map(
+        self,
+        image_tensor,
+        predicted_class=None,
+        target_size=(224, 224),
+        original_image=None,
+    ):
         """
         Hybrid anomaly map: KNN + Intensity for metallic surfaces
         Args:
             image_tensor: input image tensor
             predicted_class: predicted defect class (optional)
             target_size: output heatmap size
+            original_image: unnormalized image (numpy RGB or tensor) for intensity thresholds
         """
         # Extract features
         features = self.extract_features(image_tensor)
@@ -175,8 +182,25 @@ class PaDiM:
             knn_score = self.compute_knn_distance(features, predicted_class)
         
         # 2. Intensity-based anomaly for metallic surfaces
-        img_np = image_tensor[0].cpu().numpy()
-        grayscale = np.mean(img_np, axis=0)
+        intensity_source = original_image if original_image is not None else image_tensor
+        if isinstance(intensity_source, torch.Tensor):
+            intensity_np = intensity_source.detach().cpu().numpy()
+            if intensity_np.ndim == 4:
+                intensity_np = intensity_np[0]
+            if intensity_np.ndim == 2:
+                grayscale = intensity_np
+            elif intensity_np.ndim == 3 and intensity_np.shape[0] == 3:
+                grayscale = np.mean(intensity_np, axis=0)
+            else:
+                grayscale = np.mean(intensity_np, axis=-1)
+        else:
+            intensity_np = np.asarray(intensity_source)
+            if intensity_np.ndim == 2:
+                grayscale = intensity_np
+            elif intensity_np.ndim == 3 and intensity_np.shape[2] == 3:
+                grayscale = np.mean(intensity_np, axis=2)
+            else:
+                grayscale = np.mean(intensity_np, axis=0)
         
         # Compute local variance to identify regions with actual defects vs. uniform dark areas
         # This helps reduce false positives from normal dark regions
@@ -373,7 +397,8 @@ async def predict(file: UploadFile = File(...)):
         anomaly_map = padim_features.compute_anomaly_map(
             image_tensor,
             predicted_class=predicted_class,  # Pass predicted class
-            target_size=(image_np.shape[0], image_np.shape[1])
+            target_size=(image_np.shape[0], image_np.shape[1]),
+            original_image=image_np,
         )
         
         # Create heatmap overlay with simplified method

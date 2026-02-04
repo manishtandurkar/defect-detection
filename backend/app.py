@@ -255,7 +255,35 @@ class PaDiM:
         # 6. Simple normalization (removed complex percentile + power transforms)
         if final_map.max() > final_map.min():
             final_map = (final_map - final_map.min()) / (final_map.max() - final_map.min())
-        
+
+        # 7. Suppress corner artifacts without creating visible edge borders
+        # Apply a soft corner-only mask and preserve edges with texture variance
+        h, w = target_size
+        corner_radius = max(6, int(min(target_size) * 0.06))
+        y = np.arange(h).reshape(-1, 1)
+        x = np.arange(w).reshape(1, -1)
+
+        # Distance to nearest corner
+        dist_tl = np.sqrt((y - 0) ** 2 + (x - 0) ** 2)
+        dist_tr = np.sqrt((y - 0) ** 2 + (x - (w - 1)) ** 2)
+        dist_bl = np.sqrt((y - (h - 1)) ** 2 + (x - 0) ** 2)
+        dist_br = np.sqrt((y - (h - 1)) ** 2 + (x - (w - 1)) ** 2)
+        dist_corner = np.minimum(np.minimum(dist_tl, dist_tr), np.minimum(dist_bl, dist_br))
+
+        # Corner mask: 0 at corners, smoothly to 1 away from corners
+        corner_mask = np.clip(dist_corner / corner_radius, 0, 1).astype(np.float32)
+
+        # Normalize and resize local variance map to allow genuine corner defects
+        if local_std.max() > local_std.min():
+            variance_map = (local_std - local_std.min()) / (local_std.max() - local_std.min())
+        else:
+            variance_map = np.zeros_like(local_std, dtype=np.float32)
+        variance_map_resized = cv2.resize(variance_map, target_size)
+
+        # Blend: keep corners only if texture variance supports it
+        combined_mask = np.maximum(corner_mask, variance_map_resized)
+        final_map = final_map * combined_mask
+
         # Scale to [0, 100]
         return final_map * 100
 

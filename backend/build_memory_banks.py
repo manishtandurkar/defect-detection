@@ -183,7 +183,7 @@ def build_all_memory_banks(train_data_path, model_path, output_path='memory_bank
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Build memory banks for defect detection')
-    parser.add_argument('--train_path', type=str, default='../data/NEU/train',
+    parser.add_argument('--train_path', type=str, default='../data/train',
                       help='Path to training data directory')
     parser.add_argument('--model_path', type=str, default='../defect_detection_model.pth',
                       help='Path to trained model file')

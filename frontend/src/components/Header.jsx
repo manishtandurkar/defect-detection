@@ -12,10 +12,6 @@ function Header() {
           </div>
           <div className="logo-text">
             <h1>Defect Detection System</h1>
-            <div className="badge">
-              <Sparkles size={14} />
-              <span>XAI Powered</span>
-            </div>
           </div>
         </div>
       </div>

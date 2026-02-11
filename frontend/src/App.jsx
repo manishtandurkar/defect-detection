@@ -29,7 +29,7 @@ function App() {
       const formData = new FormData();
       formData.append('file', selectedFile);
 
-      const response = await fetch('http://localhost:8000/predict', {
+      const response = await fetch('/predict', {
         method: 'POST',
         body: formData,
       });

@@ -99,3 +99,6 @@ temp/
 *.tmp
 
 model/
+
+# Deployment artifacts
+deploy_package.zip

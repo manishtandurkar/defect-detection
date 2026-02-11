@@ -5,7 +5,8 @@ with PaDiM-based Anomaly Localization - Improved Heatmap
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 import torch
 import torch.nn as nn
 from torchvision import models, transforms
@@ -21,6 +22,7 @@ import pickle
 import os
 
 app = FastAPI(title="Defect Detection API")
+application = app
 
 # CORS middleware
 app.add_middleware(
@@ -32,7 +34,7 @@ app.add_middleware(
 )
 
 # Configuration
-MODEL_PATH = "../defect_detection_model.pth"
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "defect_detection_model.pth")
 CLASS_NAMES = ['Crazing', 'Inclusion', 'Patches', 'Pitted', 'Rolled', 'Scratches']
 IMG_SIZE = 224
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -312,7 +314,7 @@ def load_model():
         
         # Load pre-built memory banks if available
         from pathlib import Path
-        memory_bank_path = 'memory_banks.pkl'
+        memory_bank_path = os.path.join(os.path.dirname(__file__), 'memory_banks.pkl')
         if Path(memory_bank_path).exists():
             memory_data = torch.load(memory_bank_path, map_location=device)
             padim_features.memory_banks = memory_data['memory_banks']
@@ -385,8 +387,8 @@ def numpy_to_base64(image_array: np.ndarray) -> str:
     return f"data:image/png;base64,{img_str}"
 
 
-@app.get("/")
-async def root():
+@app.get("/api/health")
+async def health_check():
     """Health check endpoint"""
     return {
         "message": "Defect Detection API",
@@ -483,6 +485,23 @@ async def model_info():
         "colormap": "JET (Red=Defect, Blue=Normal)",
         "memory_banks": len(padim_features.memory_banks) if padim_features else 0
     }
+
+
+# Mount static files (Frontend)
+app.mount("/assets", StaticFiles(directory="www/assets"), name="assets")
+
+@app.get("/")
+async def serve_root():
+    """Serve the React app root"""
+    return FileResponse("www/index.html")
+
+@app.get("/{full_path:path}")
+async def serve_react_app(full_path: str):
+    """Serve the React app for any other path (client-side routing)"""
+    file_path = os.path.join("www", full_path)
+    if os.path.exists(file_path) and os.path.isfile(file_path):
+        return FileResponse(file_path)
+    return FileResponse("www/index.html")
 
 
 if __name__ == "__main__":
